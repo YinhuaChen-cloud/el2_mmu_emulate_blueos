@@ -13,6 +13,7 @@ mod uart;
 #[link_section = ".boot.text"]
 #[no_mangle]
 pub extern "C" fn init() -> ! {
+    uart::early_puts(b"we are just in init()\r\n");
     exception::init();
     mmu::init();
     uart::early_puts(b"mmu enabled\r\n");

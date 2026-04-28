@@ -10,4 +10,4 @@ exec qemu-system-aarch64 \
   -nographic \
   -serial mon:stdio \
   -smp 8 \
-  -kernel "${BUILD_DIR}/kernel.elf"
+  -kernel "${BUILD_DIR}/kernel.elf" 

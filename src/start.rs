@@ -19,11 +19,14 @@ _start:
     cmp x2, #0x8
     b.ne _el1_start
 
+    mov x3, #(1 << 31)
+    msr hcr_el2, x3
     mov x3, #0x3c5
     msr spsr_el2, x3
     msr sp_el1, x0
     ldr x3, =_el1_start
     msr elr_el2, x3
+    isb
     eret
 
 _el1_start:

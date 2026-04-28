@@ -16,16 +16,16 @@ static INIT_MSG: [u8; b"we are just in init()\r\n".len()] = *b"we are just in in
 static MMU_ENABLED_MSG: [u8; b"mmu enabled\r\n".len()] = *b"mmu enabled\r\n";
 #[cfg(translation_fault_test)]
 #[link_section = ".boot.rodata"]
-static TRANSLATION_FAULT_TEST_ENABLED_MSG: [u8; b"translation fault test enabled\r\n".len()] =
-    *b"translation fault test enabled\r\n";
+static EL2_TRANSLATION_FAULT_TEST_ENABLED_MSG: [u8; b"el2 translation fault test enabled\r\n".len()] =
+    *b"el2 translation fault test enabled\r\n";
 #[cfg(translation_fault_test)]
 #[link_section = ".boot.rodata"]
-static TRANSLATION_FAULT_READ_MSG: [u8; b"read 0x8000_0000 -> expect translation fault\r\n".len()] =
-    *b"read 0x8000_0000 -> expect translation fault\r\n";
+static EL2_TRANSLATION_FAULT_READ_MSG: [u8; b"el2 read 0x8000_0000 -> expect translation fault\r\n".len()] =
+    *b"el2 read 0x8000_0000 -> expect translation fault\r\n";
 #[cfg(translation_fault_test)]
 #[link_section = ".boot.rodata"]
-static TRANSLATION_FAULT_RETURNED_MSG: [u8; b"returned from translation-fault handler\r\n".len()] =
-    *b"returned from translation-fault handler\r\n";
+static EL2_TRANSLATION_FAULT_RETURNED_MSG: [u8; b"returned from el2 translation-fault handler\r\n".len()] =
+    *b"returned from el2 translation-fault handler\r\n";
 #[cfg(dram_oob_test)]
 #[link_section = ".boot.rodata"]
 static DRAM_OOB_TEST_ENABLED_MSG: [u8; b"dram out-of-range test enabled\r\n".len()] =
@@ -38,10 +38,26 @@ static DRAM_OOB_READ_MSG: [u8; b"read 0xa000_0000 -> verify actual fault type\r\
 #[link_section = ".boot.rodata"]
 static DRAM_OOB_RETURNED_MSG: [u8; b"returned from out-of-range handler\r\n".len()] =
     *b"returned from out-of-range handler\r\n";
-#[cfg(not(any(translation_fault_test, dram_oob_test)))]
+#[cfg(not(dram_oob_test))]
 #[link_section = ".boot.rodata"]
-static EXCEPTION_TEST_DISABLED_MSG: [u8; b"exception test disabled\r\n".len()] =
-    *b"exception test disabled\r\n";
+static EL1_EXCEPTION_TEST_DISABLED_MSG: [u8; b"no el1 exception test enabled\r\n".len()] =
+    *b"no el1 exception test enabled\r\n";
+
+#[link_section = ".boot.text"]
+#[no_mangle]
+pub extern "C" fn el2_translation_fault_test() {
+    #[cfg(translation_fault_test)]
+    {
+        uart::early_puts(&EL2_TRANSLATION_FAULT_TEST_ENABLED_MSG);
+        uart::early_puts(&EL2_TRANSLATION_FAULT_READ_MSG);
+
+        unsafe {
+            core::ptr::read_volatile(0x8000_0000 as *const u64);
+        }
+
+        uart::early_puts(&EL2_TRANSLATION_FAULT_RETURNED_MSG);
+    }
+}
 
 #[link_section = ".boot.text"]
 #[no_mangle]
@@ -50,18 +66,6 @@ pub extern "C" fn init() -> ! {
     exception::init();
     mmu::init();
     uart::early_puts(&MMU_ENABLED_MSG);
-
-    #[cfg(translation_fault_test)]
-    {
-        uart::early_puts(&TRANSLATION_FAULT_TEST_ENABLED_MSG);
-        uart::early_puts(&TRANSLATION_FAULT_READ_MSG);
-
-        unsafe {
-            core::ptr::read_volatile(0x8000_0000 as *const u64);
-        }
-
-        uart::early_puts(&TRANSLATION_FAULT_RETURNED_MSG);
-    }
 
     #[cfg(dram_oob_test)]
     {
@@ -75,8 +79,8 @@ pub extern "C" fn init() -> ! {
         uart::early_puts(&DRAM_OOB_RETURNED_MSG);
     }
 
-    #[cfg(not(any(translation_fault_test, dram_oob_test)))]
-    uart::early_puts(&EXCEPTION_TEST_DISABLED_MSG);
+    #[cfg(not(dram_oob_test))]
+    uart::early_puts(&EL1_EXCEPTION_TEST_DISABLED_MSG);
 
     jump_to_high_kernel(main::main)
 }

@@ -132,11 +132,152 @@ __vector_lower_el_a32_fiq:
     save_and_return 14
 __vector_lower_el_a32_serror:
     save_and_return 15
+
+    .align 11
+    .global __exception_vectors_el2
+__exception_vectors_el2:
+    b __vector_el2_current_el_sp0_sync
+    .balign 128
+    b __vector_el2_current_el_sp0_irq
+    .balign 128
+    b __vector_el2_current_el_sp0_fiq
+    .balign 128
+    b __vector_el2_current_el_sp0_serror
+    .balign 128
+    b __vector_el2_current_el_spx_sync
+    .balign 128
+    b __vector_el2_current_el_spx_irq
+    .balign 128
+    b __vector_el2_current_el_spx_fiq
+    .balign 128
+    b __vector_el2_current_el_spx_serror
+    .balign 128
+    b __vector_el2_lower_el_a64_sync
+    .balign 128
+    b __vector_el2_lower_el_a64_irq
+    .balign 128
+    b __vector_el2_lower_el_a64_fiq
+    .balign 128
+    b __vector_el2_lower_el_a64_serror
+    .balign 128
+    b __vector_el2_lower_el_a32_sync
+    .balign 128
+    b __vector_el2_lower_el_a32_irq
+    .balign 128
+    b __vector_el2_lower_el_a32_fiq
+    .balign 128
+    b __vector_el2_lower_el_a32_serror
+
+    .macro save_and_return_el2 vector_id
+    sub sp, sp, #288
+    stp x0, x1, [sp, #0]
+    stp x2, x3, [sp, #16]
+    stp x4, x5, [sp, #32]
+    stp x6, x7, [sp, #48]
+    stp x8, x9, [sp, #64]
+    stp x10, x11, [sp, #80]
+    stp x12, x13, [sp, #96]
+    stp x14, x15, [sp, #112]
+    stp x16, x17, [sp, #128]
+    stp x18, x19, [sp, #144]
+    stp x20, x21, [sp, #160]
+    stp x22, x23, [sp, #176]
+    stp x24, x25, [sp, #192]
+    stp x26, x27, [sp, #208]
+    stp x28, x29, [sp, #224]
+    str x30, [sp, #240]
+
+    mov x9, #\vector_id
+    str x9, [sp, #248]
+    mrs x9, esr_el2
+    str x9, [sp, #256]
+    mrs x9, far_el2
+    str x9, [sp, #264]
+    mrs x9, elr_el2
+    str x9, [sp, #272]
+    mrs x9, spsr_el2
+    str x9, [sp, #280]
+
+    mov x0, sp
+    bl rust_exception_handler
+
+    ldr x9, [sp, #272]
+    msr elr_el2, x9
+    ldr x9, [sp, #280]
+    msr spsr_el2, x9
+
+    ldp x0, x1, [sp, #0]
+    ldp x2, x3, [sp, #16]
+    ldp x4, x5, [sp, #32]
+    ldp x6, x7, [sp, #48]
+    ldp x8, x9, [sp, #64]
+    ldp x10, x11, [sp, #80]
+    ldp x12, x13, [sp, #96]
+    ldp x14, x15, [sp, #112]
+    ldp x16, x17, [sp, #128]
+    ldp x18, x19, [sp, #144]
+    ldp x20, x21, [sp, #160]
+    ldp x22, x23, [sp, #176]
+    ldp x24, x25, [sp, #192]
+    ldp x26, x27, [sp, #208]
+    ldp x28, x29, [sp, #224]
+    ldr x30, [sp, #240]
+    add sp, sp, #288
+    eret
+    .endm
+
+__vector_el2_current_el_sp0_sync:
+    save_and_return_el2 0
+__vector_el2_current_el_sp0_irq:
+    save_and_return_el2 1
+__vector_el2_current_el_sp0_fiq:
+    save_and_return_el2 2
+__vector_el2_current_el_sp0_serror:
+    save_and_return_el2 3
+__vector_el2_current_el_spx_sync:
+    save_and_return_el2 4
+__vector_el2_current_el_spx_irq:
+    save_and_return_el2 5
+__vector_el2_current_el_spx_fiq:
+    save_and_return_el2 6
+__vector_el2_current_el_spx_serror:
+    save_and_return_el2 7
+__vector_el2_lower_el_a64_sync:
+    save_and_return_el2 8
+__vector_el2_lower_el_a64_irq:
+    save_and_return_el2 9
+__vector_el2_lower_el_a64_fiq:
+    save_and_return_el2 10
+__vector_el2_lower_el_a64_serror:
+    save_and_return_el2 11
+__vector_el2_lower_el_a32_sync:
+    save_and_return_el2 12
+__vector_el2_lower_el_a32_irq:
+    save_and_return_el2 13
+__vector_el2_lower_el_a32_fiq:
+    save_and_return_el2 14
+__vector_el2_lower_el_a32_serror:
+    save_and_return_el2 15
 "#
 );
 
 unsafe extern "C" {
     static __exception_vectors: u8;
+    static __exception_vectors_el2: u8;
+}
+
+#[link_section = ".boot.text"]
+#[no_mangle]
+pub extern "C" fn exception_init_el2() {
+    unsafe {
+        let vbar = core::ptr::addr_of!(__exception_vectors_el2) as u64;
+        asm!(
+            "msr vbar_el2, {vbar}",
+            "isb",
+            vbar = in(reg) vbar,
+            options(nostack, preserves_flags)
+        );
+    }
 }
 
 #[link_section = ".boot.text"]
@@ -169,13 +310,13 @@ pub extern "C" fn rust_exception_handler(frame: &mut ExceptionFrame) {
     put_vector_name(frame.vector);
     uart::early_puts(b"\r\n");
 
-    uart::early_puts(b"esr_el1=");
+    uart::early_puts(b"esr=");
     uart::early_put_hex_u64(frame.esr);
-    uart::early_puts(b"\r\nfar_el1=");
+    uart::early_puts(b"\r\nfar=");
     uart::early_put_hex_u64(frame.far);
-    uart::early_puts(b"\r\nelr_el1=");
+    uart::early_puts(b"\r\nelr=");
     uart::early_put_hex_u64(frame.elr);
-    uart::early_puts(b"\r\nspsr_el1=");
+    uart::early_puts(b"\r\nspsr=");
     uart::early_put_hex_u64(frame.spsr);
     uart::early_puts(b"\r\n");
 

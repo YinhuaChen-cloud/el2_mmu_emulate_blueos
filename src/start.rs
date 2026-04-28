@@ -19,7 +19,10 @@ _start:
     cmp x2, #0x8
     b.ne _el1_start
 
+    bl exception_init_el2
     bl enable_el2_mmu
+    // 经过 gdb 调试，发现访问 0x8000_0000 会触发 EL2 的 translation fault 异常，说明 EL2 MMU 已经成功启用
+    bl el2_translation_fault_test
 
     // set HCR_EL2 to enable AArch64 execution in EL1
     mov x3, #(1 << 31)

@@ -54,14 +54,21 @@ const TCR_VALUE: u64 = TCR_T0SZ_4GB
 struct PageTable([u64; ENTRY_COUNT]);
 
 #[link_section = ".boot.bss.pgtables"]
-static mut L1_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
+static mut EL2_L1_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
+#[link_section = ".boot.bss.pgtables"]
+static mut EL1_L1_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
 #[link_section = ".boot.bss.pgtables"]
 static mut LINEAR_L1_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
 #[link_section = ".boot.bss.pgtables"]
-static mut LOW_1GB_L2_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
+static mut EL2_LOW_1GB_L2_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
+#[link_section = ".boot.bss.pgtables"]
+static mut EL1_LOW_1GB_L2_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
 #[cfg(dram_oob_test)]
 #[link_section = ".boot.bss.pgtables"]
-static mut OOB_1GB_L2_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
+static mut EL2_OOB_1GB_L2_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
+#[cfg(dram_oob_test)]
+#[link_section = ".boot.bss.pgtables"]
+static mut EL1_OOB_1GB_L2_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
 
 #[inline(always)]
 const fn table_desc(addr: usize) -> u64 {
@@ -84,18 +91,22 @@ const fn normal_block_attrs() -> u64 {
 }
 
 #[link_section = ".boot.text"]
-unsafe fn build_identity_map() {
-    L1_TABLE.0[0] = table_desc(core::ptr::addr_of!(LOW_1GB_L2_TABLE) as usize);
+unsafe fn build_identity_map(
+    l1_table: *mut PageTable,
+    low_1gb_l2_table: *mut PageTable,
+    #[cfg(dram_oob_test)] oob_1gb_l2_table: *mut PageTable,
+) {
+    (*l1_table).0[0] = table_desc(low_1gb_l2_table as usize);
 
     for index in 0..ENTRY_COUNT {
         let phys = index << PAGE_SHIFT_2M;
-        LOW_1GB_L2_TABLE.0[index] = block_desc(phys, device_block_attrs());
+        (*low_1gb_l2_table).0[index] = block_desc(phys, device_block_attrs());
     }
 
     // 左闭右开区间 等价于 >= 1 && < 2
     for index in 1..2 {
         let phys = index << PAGE_SHIFT_1G;
-        L1_TABLE.0[index] = block_desc(phys, normal_block_attrs());
+        (*l1_table).0[index] = block_desc(phys, normal_block_attrs());
     }
 
     #[cfg(dram_oob_test)]
@@ -103,8 +114,8 @@ unsafe fn build_identity_map() {
         let l1_index = OOB_TEST_VA >> PAGE_SHIFT_1G;
         let l2_index = (OOB_TEST_VA & ((1usize << PAGE_SHIFT_1G) - 1)) >> PAGE_SHIFT_2M;
 
-        L1_TABLE.0[l1_index] = table_desc(core::ptr::addr_of!(OOB_1GB_L2_TABLE) as usize);
-        OOB_1GB_L2_TABLE.0[l2_index] = block_desc(OOB_TEST_VA, normal_block_attrs());
+        (*l1_table).0[l1_index] = table_desc(oob_1gb_l2_table as usize);
+        (*oob_1gb_l2_table).0[l2_index] = block_desc(OOB_TEST_VA, normal_block_attrs());
     }
 }
 
@@ -129,9 +140,14 @@ unsafe fn build_linear_map() {
 #[no_mangle]
 pub extern "C" fn enable_el2_mmu() {
     unsafe {
-        build_identity_map();
+        build_identity_map(
+            core::ptr::addr_of_mut!(EL2_L1_TABLE),
+            core::ptr::addr_of_mut!(EL2_LOW_1GB_L2_TABLE),
+            #[cfg(dram_oob_test)]
+            core::ptr::addr_of_mut!(EL2_OOB_1GB_L2_TABLE),
+        );
 
-        let ttbr0 = core::ptr::addr_of!(L1_TABLE) as u64;
+        let ttbr0 = core::ptr::addr_of!(EL2_L1_TABLE) as u64;
         let mut sctlr: u64;
 
         asm!(
@@ -165,10 +181,15 @@ pub extern "C" fn enable_el2_mmu() {
 #[link_section = ".boot.text"]
 pub fn init() {
     unsafe {
-        build_identity_map();
+        build_identity_map(
+            core::ptr::addr_of_mut!(EL1_L1_TABLE),
+            core::ptr::addr_of_mut!(EL1_LOW_1GB_L2_TABLE),
+            #[cfg(dram_oob_test)]
+            core::ptr::addr_of_mut!(EL1_OOB_1GB_L2_TABLE),
+        );
         build_linear_map();
 
-        let ttbr0 = core::ptr::addr_of!(L1_TABLE) as u64;
+        let ttbr0 = core::ptr::addr_of!(EL1_L1_TABLE) as u64;
         let ttbr1 = core::ptr::addr_of!(LINEAR_L1_TABLE) as u64;
         let mut sctlr: u64;
 

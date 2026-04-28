@@ -30,11 +30,14 @@ const TCR_IRGN0_WBWA: u64 = 0b01 << 8;
 const TCR_ORGN0_WBWA: u64 = 0b01 << 10;
 const TCR_SH0_INNER: u64 = 0b11 << 12;
 const TCR_TG0_4K: u64 = 0b00 << 14;
+const TCR_EL2_PS_40BIT: u64 = 0b010 << 16;
 const TCR_IRGN1_WBWA: u64 = 0b01 << 24;
 const TCR_ORGN1_WBWA: u64 = 0b01 << 26;
 const TCR_SH1_INNER: u64 = 0b11 << 28;
 const TCR_TG1_4K: u64 = 0b10 << 30;
 const TCR_IPS_40BIT: u64 = 0b010 << 32;
+const TCR_EL2_VALUE: u64 =
+    TCR_T0SZ_4GB | TCR_IRGN0_WBWA | TCR_ORGN0_WBWA | TCR_SH0_INNER | TCR_TG0_4K | TCR_EL2_PS_40BIT;
 const TCR_VALUE: u64 = TCR_T0SZ_4GB
     | TCR_T1SZ_4GB
     | TCR_IRGN0_WBWA
@@ -119,6 +122,43 @@ unsafe fn build_linear_map() {
         };
 
         LINEAR_L1_TABLE.0[LINEAR_L1_START_INDEX + index] = block_desc(phys, attrs);
+    }
+}
+
+#[link_section = ".boot.text"]
+#[no_mangle]
+pub extern "C" fn enable_el2_mmu() {
+    unsafe {
+        build_identity_map();
+
+        let ttbr0 = core::ptr::addr_of!(L1_TABLE) as u64;
+        let mut sctlr: u64;
+
+        asm!(
+            "dsb ishst",
+            "msr mair_el2, {mair}",
+            "msr tcr_el2, {tcr}",
+            "msr ttbr0_el2, {ttbr0}",
+            "isb",
+            "tlbi alle2",
+            "dsb ish",
+            "isb",
+            "mrs {sctlr}, sctlr_el2",
+            mair = in(reg) MAIR_VALUE,
+            tcr = in(reg) TCR_EL2_VALUE,
+            ttbr0 = in(reg) ttbr0,
+            sctlr = out(reg) sctlr,
+            options(nostack)
+        );
+
+        sctlr |= 1 << 0;
+
+        asm!(
+            "msr sctlr_el2, {sctlr}",
+            "isb",
+            sctlr = in(reg) sctlr,
+            options(nostack)
+        );
     }
 }
 

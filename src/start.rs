@@ -19,6 +19,9 @@ _start:
     cmp x2, #0x8
     b.ne _el1_start
 
+    bl enable_el2_mmu
+
+    // set HCR_EL2 to enable AArch64 execution in EL1
     mov x3, #(1 << 31)
     msr hcr_el2, x3
     mov x3, #0x3c5

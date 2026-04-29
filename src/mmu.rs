@@ -148,25 +148,6 @@ unsafe fn build_linear_map() {
 }
 
 #[link_section = ".boot.text"]
-unsafe fn build_el2_linear_map(current_ttbr0: usize) {
-    let current_l1_table = current_ttbr0 & !((1usize << PAGE_TABLE_SHIFT) - 1);
-
-    EL2_L0_TABLE.0[0] = table_desc(current_l1_table);
-    EL2_L0_TABLE.0[EL2_LINEAR_L0_INDEX] = table_desc(core::ptr::addr_of!(EL2_LINEAR_L1_TABLE) as usize);
-
-    for index in 0..LINEAR_MAP_GB_COUNT {
-        let phys = index << PAGE_SHIFT_1G;
-        let attrs = if index == 0 {
-            device_block_attrs()
-        } else {
-            normal_block_attrs()
-        };
-
-        EL2_LINEAR_L1_TABLE.0[EL2_LINEAR_L1_START_INDEX + index] = block_desc(phys, attrs);
-    }
-}
-
-#[link_section = ".boot.text"]
 #[no_mangle]
 pub extern "C" fn enable_el2_mmu() {
     unsafe {
@@ -205,6 +186,25 @@ pub extern "C" fn enable_el2_mmu() {
             sctlr = in(reg) sctlr,
             options(nostack)
         );
+    }
+}
+
+#[link_section = ".boot.text"]
+unsafe fn build_el2_linear_map(current_ttbr0: usize) {
+    let current_l1_table = current_ttbr0 & !((1usize << PAGE_TABLE_SHIFT) - 1);
+
+    EL2_L0_TABLE.0[0] = table_desc(current_l1_table);
+    EL2_L0_TABLE.0[EL2_LINEAR_L0_INDEX] = table_desc(core::ptr::addr_of!(EL2_LINEAR_L1_TABLE) as usize);
+
+    for index in 0..LINEAR_MAP_GB_COUNT {
+        let phys = index << PAGE_SHIFT_1G;
+        let attrs = if index == 0 {
+            device_block_attrs()
+        } else {
+            normal_block_attrs()
+        };
+
+        EL2_LINEAR_L1_TABLE.0[EL2_LINEAR_L1_START_INDEX + index] = block_desc(phys, attrs);
     }
 }
 

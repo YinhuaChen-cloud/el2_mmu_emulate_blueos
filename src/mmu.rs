@@ -3,14 +3,14 @@ use core::arch::asm;
 const ENTRY_COUNT: usize = 512;
 const PAGE_SHIFT_2M: usize = 21;
 const PAGE_SHIFT_1G: usize = 30;
-const PAGE_TABLE_SHIFT: usize = 12;
-const PAGE_INDEX_MASK: usize = ENTRY_COUNT - 1;
 pub const LINEAR_MAP_BASE: usize = 0xffff_ffff_0000_0000;
 const LINEAR_L1_START_INDEX: usize = 0;
-const EL2_LINEAR_L0_INDEX: usize = (LINEAR_MAP_BASE >> 39) & PAGE_INDEX_MASK;
-const EL2_LINEAR_L1_START_INDEX: usize = (LINEAR_MAP_BASE >> PAGE_SHIFT_1G) & PAGE_INDEX_MASK;
 const LINEAR_MAP_GB_COUNT: usize = 4;
 const OOB_TEST_VA: usize = 0xa000_0000;
+const ID_AA64MMFR1_EL1_VH_SHIFT: u64 = 8;
+const ID_AA64MMFR1_EL1_VH_MASK: u64 = 0xf;
+const ID_AA64MMFR1_EL1_VH_VHE: u64 = 0x1;
+const HCR_EL2_E2H: u64 = 1 << 34;
 
 const DESC_VALID: u64 = 1 << 0;
 const DESC_TABLE: u64 = 1 << 1;
@@ -29,7 +29,6 @@ const MAIR_NORMAL_WB: u64 = 0xff;
 const MAIR_VALUE: u64 = MAIR_DEVICE_NGNRNE | (MAIR_NORMAL_WB << 8);
 
 const TCR_T0SZ_4GB: u64 = 32;
-const TCR_T0SZ_48BIT: u64 = 16;
 const TCR_T1SZ_4GB: u64 = 32 << 16;
 const TCR_IRGN0_WBWA: u64 = 0b01 << 8;
 const TCR_ORGN0_WBWA: u64 = 0b01 << 10;
@@ -43,8 +42,17 @@ const TCR_TG1_4K: u64 = 0b10 << 30;
 const TCR_IPS_40BIT: u64 = 0b010 << 32;
 const TCR_EL2_VALUE: u64 =
     TCR_T0SZ_4GB | TCR_IRGN0_WBWA | TCR_ORGN0_WBWA | TCR_SH0_INNER | TCR_TG0_4K | TCR_EL2_PS_40BIT;
-const TCR_EL2_LINEAR_VALUE: u64 =
-    TCR_T0SZ_48BIT | TCR_IRGN0_WBWA | TCR_ORGN0_WBWA | TCR_SH0_INNER | TCR_TG0_4K | TCR_EL2_PS_40BIT;
+const TCR_EL2_HOST_VALUE: u64 = TCR_T0SZ_4GB
+    | TCR_T1SZ_4GB
+    | TCR_IRGN0_WBWA
+    | TCR_ORGN0_WBWA
+    | TCR_SH0_INNER
+    | TCR_TG0_4K
+    | TCR_IRGN1_WBWA
+    | TCR_ORGN1_WBWA
+    | TCR_SH1_INNER
+    | TCR_TG1_4K
+    | TCR_IPS_40BIT;
 const TCR_VALUE: u64 = TCR_T0SZ_4GB
     | TCR_T1SZ_4GB
     | TCR_IRGN0_WBWA
@@ -62,8 +70,6 @@ struct PageTable([u64; ENTRY_COUNT]);
 
 #[link_section = ".boot.bss.pgtables"]
 static mut EL2_L1_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
-#[link_section = ".boot.bss.pgtables"]
-static mut EL2_L0_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
 #[link_section = ".boot.bss.pgtables"]
 static mut EL1_L1_TABLE: PageTable = PageTable([0; ENTRY_COUNT]);
 #[link_section = ".boot.bss.pgtables"]
@@ -148,6 +154,38 @@ unsafe fn build_linear_map() {
 }
 
 #[link_section = ".boot.text"]
+unsafe fn build_el2_linear_map() {
+    // With VHE enabled, TTBR1_EL2 covers the top 4GB VA region selected by T1SZ=32.
+    // The walk starts from L1 and uses VA[31:30] within that region, so entries 0..3
+    // map 0xffff_ffff_0000_0000 + PA -> PA.
+    for index in 0..LINEAR_MAP_GB_COUNT {
+        let phys = index << PAGE_SHIFT_1G;
+        let attrs = if index == 0 {
+            device_block_attrs()
+        } else {
+            normal_block_attrs()
+        };
+
+        EL2_LINEAR_L1_TABLE.0[LINEAR_L1_START_INDEX + index] = block_desc(phys, attrs);
+    }
+}
+
+#[inline(always)]
+fn el2_supports_vhe() -> bool {
+    let aa64mmfr1: u64;
+
+    unsafe {
+        asm!(
+            "mrs {aa64mmfr1}, id_aa64mmfr1_el1",
+            aa64mmfr1 = out(reg) aa64mmfr1,
+            options(nostack)
+        );
+    }
+
+    ((aa64mmfr1 >> ID_AA64MMFR1_EL1_VH_SHIFT) & ID_AA64MMFR1_EL1_VH_MASK) == ID_AA64MMFR1_EL1_VH_VHE
+}
+
+#[link_section = ".boot.text"]
 #[no_mangle]
 pub extern "C" fn enable_el2_mmu() {
     unsafe {
@@ -190,50 +228,37 @@ pub extern "C" fn enable_el2_mmu() {
 }
 
 #[link_section = ".boot.text"]
-unsafe fn build_el2_linear_map(current_ttbr0: usize) {
-    let current_l1_table = current_ttbr0 & !((1usize << PAGE_TABLE_SHIFT) - 1);
-
-    EL2_L0_TABLE.0[0] = table_desc(current_l1_table);
-    EL2_L0_TABLE.0[EL2_LINEAR_L0_INDEX] = table_desc(core::ptr::addr_of!(EL2_LINEAR_L1_TABLE) as usize);
-
-    for index in 0..LINEAR_MAP_GB_COUNT {
-        let phys = index << PAGE_SHIFT_1G;
-        let attrs = if index == 0 {
-            device_block_attrs()
-        } else {
-            normal_block_attrs()
-        };
-
-        EL2_LINEAR_L1_TABLE.0[EL2_LINEAR_L1_START_INDEX + index] = block_desc(phys, attrs);
-    }
-}
-
-#[link_section = ".boot.text"]
 #[no_mangle]
 pub extern "C" fn el2_add_linearmap() {
+    if !el2_supports_vhe() {
+        return;
+    }
+
     unsafe {
-        let mut current_ttbr0: u64;
+        let ttbr1 = core::ptr::addr_of!(EL2_LINEAR_L1_TABLE) as u64;
+        let mut hcr: u64;
 
         asm!(
-            "mrs {ttbr0}, ttbr0_el2",
-            ttbr0 = out(reg) current_ttbr0,
+            "mrs {hcr}, hcr_el2",
+            hcr = out(reg) hcr,
             options(nostack)
         );
 
-        build_el2_linear_map(current_ttbr0 as usize);
-
-        let new_ttbr0 = core::ptr::addr_of!(EL2_L0_TABLE) as u64;
+        build_el2_linear_map();
+        hcr |= HCR_EL2_E2H;
 
         asm!(
             "dsb ishst",
-            "msr ttbr0_el2, {ttbr0}",
+            "msr hcr_el2, {hcr}",
+            "msr ttbr1_el2, {ttbr1}",
             "msr tcr_el2, {tcr}",
             "isb",
             "tlbi alle2",
             "dsb ish",
             "isb",
-            ttbr0 = in(reg) new_ttbr0,
-            tcr = in(reg) TCR_EL2_LINEAR_VALUE,
+            hcr = in(reg) hcr,
+            ttbr1 = in(reg) ttbr1,
+            tcr = in(reg) TCR_EL2_HOST_VALUE,
             options(nostack)
         );
     }

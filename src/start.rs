@@ -23,9 +23,12 @@ _start:
     bl enable_el2_mmu
     // 经过 gdb 调试，发现访问 0x8000_0000 会触发 EL2 的 translation fault 异常，说明 EL2 MMU 已经成功启用
     // bl el2_translation_fault_test // (此时运行测试会在 rust_exception_handler 卡死，因为部分字符串在高 VA)
+    bl el2_add_linearmap
 
     // set HCR_EL2 to enable AArch64 execution in EL1
-    mov x3, #(1 << 31)
+    mrs x3, hcr_el2
+    mov x4, #(1 << 31)
+    orr x3, x3, x4
     msr hcr_el2, x3
     mov x3, #0x3c5
     msr spsr_el2, x3

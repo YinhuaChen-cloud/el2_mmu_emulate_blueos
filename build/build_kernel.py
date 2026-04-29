@@ -51,6 +51,8 @@ def main() -> int:
         f"link-arg=-T{linker}",
         "--target",
         "aarch64-unknown-none",
+        "-C",
+        "target-feature=+vhe",
     ]
 
     if args.debug_symbols:
